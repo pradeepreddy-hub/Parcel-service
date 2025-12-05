@@ -1,0 +1,128 @@
+name: Build, Deploy, and Analyze
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    steps:
+      # Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Install Maven
+      - name: Install Maven
+        run: |
+          sudo apt update
+          sudo apt install maven -y
+          mvn -v
+          
+      # Set up Java
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      # Cache Maven dependencies
+      - name: Cache Maven dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+            
+      # Build the project with Maven
+      - name: Build with Maven
+        run: mvn clean install
+
+      # Store artifacts with versioning (Before running the .jar)
+      - name: Upload Artifacts with Versioning
+        uses: actions/upload-artifact@v3
+        with:
+          name: my-app-artifact-${{ github.sha }}  # Artifact version based on commit SHA
+          path: target/*.jar  # Path to the built artifact (e.g., JAR file or other build outputs)
+
+      # Run the Spring Boot application in the background
+      - name: Run Spring Boot App
+        run: mvn spring-boot:run &
+
+      # Wait for the Spring Boot app to fully start
+      - name: Wait for Spring Boot App to Start
+        run: |
+          echo "Waiting for the app to start..."
+          sleep 15  # Allow time for the Spring Boot app to fully initialize
+          echo "App should now be running."
+          
+      # Validate that the application is running
+      - name: Validate App is Running
+        run: |
+          echo "Checking if the app is running..."
+          IP_ADDRESS=$(curl -s ifconfig.me) # Fetch public IP address
+          PORT=8080
+          RESPONSE=$(curl --write-out "%{http_code}" --silent --output /dev/null http://$IP_ADDRESS:$PORT)
+          if [ "$RESPONSE" -eq 200 ]; then
+            echo "The app is running successfully at http://$IP_ADDRESS:$PORT!"
+          else
+            echo "The app failed to start. HTTP response code: $RESPONSE"
+            exit 1
+          fi
+          
+      # Display the IP address and port number for accessing the app
+      - name: Display IP Address and Port
+        run: |
+          echo "Fetching the runner's IP address..."
+          IP_ADDRESS=$(curl -s ifconfig.me) # This fetches the public IP of the runner
+          PORT=8080
+          echo "The app is accessible at: http://$IP_ADDRESS:$PORT"
+          
+      # Wait for 3 minutes (180 seconds)
+      - name: Wait for 3 minutes
+        run: |
+          echo "App has been running for 3 minutes. Waiting..."
+          sleep 180 # Wait for 3 minutes
+          
+      # Stop the Spring Boot app gracefully
+      - name: Gracefully Stop Spring Boot App
+        run: |
+          echo "Stopping the app gracefully..."
+          mvn spring-boot:stop
+          
+  sonarcloud-analysis:
+    runs-on: ubuntu-latest
+    needs: build  # Ensure the build job runs before sonarcloud-analysis job
+
+    steps:
+      # Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Set up Java
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # SonarCloud Analysis (separate job-feature-1)
+      - name: SonarCloud Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_ORG: your-organization # Replace with your actual SonarCloud organization
+          SONAR_HOST_URL: https://sonarcloud.io
+        run: |
+          mvn clean verify sonar:sonar \
+            -Dsonar.organization=${{ secrets.SONAR_ORG }} \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+
