@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'slave2' }
+    agent { label 'slave3' }
 
     environment {
         APP_JAR = "target/simple-parcel-service-app-1.0-SNAPSHOT.jar"
